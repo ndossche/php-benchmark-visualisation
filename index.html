@@ -1,10 +1,9 @@
 <!doctype html>
 <html>
-	<head>
-		<title>Performance graphs</title>
-		<meta charset="utf-8">
-        <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/3.9.1/chart.min.js" integrity="sha512-ElRFoEQdI5Ht6kZvyzXhYG9NqjtkmlkfYk0wr6wHxU9JEHakS7UJZNeml5ALk+8IKlU6jDgMabC3vkumRokgJA==" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
-        <script src="https://cdnjs.cloudflare.com/ajax/libs/chartjs-plugin-zoom/2.0.1/chartjs-plugin-zoom.min.js" integrity="sha512-wUYbRPLV5zs6IqvWd88HIqZU/b8TBx+I8LEioQ/UC0t5EMCLApqhIAnUg7EsAzdbhhdgW07TqYDdH3QEXRcPOQ==" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+    <head>
+        <title>Performance graphs</title>
+        <meta charset="utf-8">
+        <script src="https://cdn.canvasjs.com/canvasjs.min.js"></script>
         <script>
             function getSelectedBranch() {
                 const s = new URLSearchParams(location.search);
@@ -27,6 +26,15 @@
                 };
             }
 
+            function toggleDataSeries(e) {
+                if (typeof(e.dataSeries.visible) === "undefined" || e.dataSeries.visible) {
+                    e.dataSeries.visible = false;
+                } else {
+                    e.dataSeries.visible = true;
+                }
+                e.chart.render();
+            }
+
             window.onload = async _ => {
                 const rawData = await fetch('data.json').then(r => r.json());
 
@@ -43,28 +51,19 @@
 
                 setupBranchSelector(selectedBranch, branches);
 
-                const labels = [];
-
-                const labelToColor = new Map();
-                labelToColor.set('Zend/bench.php', '#7476ad');
-                labelToColor.set('Zend/bench.php JIT', '#7476ad');
-                labelToColor.set('Symfony Demo 2.2.3', 'black');
-                labelToColor.set('Symfony Demo 2.2.3 JIT', 'black');
-                labelToColor.set('Wordpress 6.2', '#36a2eb');
-                labelToColor.set('Wordpress 6.2 JIT', '#36a2eb');
-                // labelToColor.set('Laravel 10.10', '#f9322c');
-                // labelToColor.set('Laravel 10.10 JIT', '#f9322c');
-
-                const data = {
-                    labels: labels,
-                    datasets: [],
-                };
+                const data = [];
 
                 for (const benchmark of rawData.benchmarks) {
-                    data.datasets.push({
-                        label: benchmark,
-                        data: [],
-                        borderColor: labelToColor.get(benchmark) || 'grey',
+                    data.push({
+                        type: "line",
+                        dataPoints: [],
+                        name: benchmark,
+                        showInLegend: true,
+                        markerSize: 0,
+                        click: function (e) {
+                            const url = "https://github.com/php/php-src/commit/" + e.dataPoint.commit_info.id;
+                            window.open(url, "_blank");
+                        },
                     });
                 }
 
@@ -80,129 +79,69 @@
                 });
 
                 for (const entry of branchData) {
+                    const date = entry.commit_info.date;
                     Object.values(rawData.benchmarks).forEach((name, id) => {
                         if (entry.summary[name])
-                            data.datasets[id].data.push(entry.summary[name].instructions);
-                        else
-                            data.datasets[id].data.push(null);
+                            data[id].dataPoints.push({ x: date, y: Number(entry.summary[name].instructions), commit_info: entry.commit_info });
                     });
-                    labels.push(entry.commit_info.date.toLocaleDateString());
                 }
 
-                const relativeData = {
-                    datasets: JSON.parse(JSON.stringify(data.datasets)),
-                    labels: data.labels,
-                };
-                for (let i = 0; i < data.datasets.length; ++i) {
-                    const dataPoints = relativeData.datasets[i].data;
+                for (let i = 0; i < data.length; ++i) {
+                    const dataPoints = data[i].dataPoints;
                     let firstNonNull = 0;
-                    while (firstNonNull < dataPoints.length && !dataPoints[firstNonNull])
+                    while (firstNonNull < dataPoints.length && !dataPoints[firstNonNull].y)
                         firstNonNull++;
-                    let first = dataPoints[firstNonNull];
+                    let first = dataPoints[firstNonNull].y;
                     for (let j = firstNonNull + 1; j < dataPoints.length; ++j) {
-                        if (dataPoints[j])
-                            dataPoints[j] = (dataPoints[j] - first) / first * 100;
+                        if (dataPoints[j].y)
+                            dataPoints[j].y = (dataPoints[j].y - first) / first * 100;
                     }
-                    dataPoints[firstNonNull] = 0;
+                    dataPoints[firstNonNull].y = 0;
                 }
 
-                const relativeScales = {
-                    yAxes: {
-                        title: {display: true, text: 'Relative change in percentage in instruction count'},
-                        //suggestedMin: -100,
-                        //suggestedMax: 100,
-                        ticks: {
-                            callback: function(value, index, ticks) {
-                                return value.toFixed(3) + "%";
-                            }
-                        }
-                    },
-                };
-
-                const absoluteScales = {
-                    yAxes: {
-                        title: {display: true, text: 'Number of instructions (absolute)'},
-                    },
-                };
-
-                let chart;
                 const config = {
-                    type: 'line',
-                    options: {
-                        responsive: true,
-                        plugins: {
-                            legend: {
-                                position: 'top',
-                            },
-                            title: {
-                                display: true,
-                                text: 'PHP performance measurements in number of instructions'
-                            },
-                            subtitle: {
-                                display: true,
-                                text: 'Smaller numbers are better'
-                            },
-                            tooltip: {
-                                callbacks: {
-                                    label: function(context) {
-                                        let label = context.dataset.label;
+                    data: data,
+                    legend: {
+                        verticalAlign: "top",
+                        itemclick: toggleDataSeries,
+                        fontSize: 14,
+                    },
+                    title: { text: 'PHP performance measurements in number of instructions', fontSize: 14 },
+                    subtitles: [{ text: 'Smaller numbers are better', fontSize: 12 }],
+                    axisX: {
+                      titleFontSize: 14,
+                      labelFontSize: 14,
+                      gridThickness: 1,
+                      gridColor: '#dddddd',
+                      lineColor: '#dddddd',
+                    },
+                    axisY: {
+                        title: 'Relative change in percentage in instruction count',
+                        suffix: "%",
+                        titleFontSize: 14,
+                        labelFontSize: 14,
+                        gridColor: '#dddddd',
+                        lineColor: '#dddddd',
+                    },
+                    zoomEnabled: true,
+                    toolTip: {
+                        content: function(e) {
+                            let label = e.entries[0].dataSeries.name;
 
-                                        const {commit_info} = branchData[context.dataIndex];
-                                        let value = context.formattedValue;
-                                        if (relative)
-                                            value += "%";
+                            const {commit_info} = branchData[e.entries[0].index];
+                            let value = e.entries[0].dataPoint.y.toLocaleString(undefined, { maximumFractionDigits: 3 }) + "%";
 
-                                        return [
-                                            label + ": " + value,
-                                            "Commit ID: " + commit_info.id.substr(0, 8),
-                                            commit_info.subject,
-                                        ];
-                                    }
-                                }
-                            },
-                            zoom: {
-                                zoom: {
-                                    wheel: {
-                                        enabled: true,
-                                    },
-                                    pinch: {
-                                        enabled: true
-                                    },
-                                    drag: {
-                                        enabled: true,
-                                    },
-                                    mode: 'x',
-                                    scaleMode: 'x',
-                                }
-                            }
+                            return `
+                                ${label}: ${value}<br>
+                                Commit ID: ${commit_info.id.substr(0, 8)}<br>
+                                ${commit_info.subject}
+                            `;
                         },
-                        onClick: function(event) {
-                            const activePoints = chart.getElementsAtEventForMode(event, 'nearest', {intersect: true}, true);
-                            const firstPoint = activePoints[0];
-                            if (!firstPoint) return;
-                            const label = chart.data.labels[firstPoint.index];
-                            const data = branchData[firstPoint.index];
-                            const url = "https://github.com/php/php-src/commit/" + data.commit_info.id;
-                            window.open(url, "_blank");
-                        }
                     },
                 };
 
-                let relative = true;
-
-                function updateChartConfig(config) {
-                    config.data = relative ? relativeData : data;
-                    config.options.scales = relative ? relativeScales : absoluteScales;
-                }
-
-                window.updateChart = () => {
-                    relative = !relative;
-                    updateChartConfig(chart.config);
-                    chart.update();
-                };
-
-                updateChartConfig(config);
-                chart = new Chart(document.getElementById("chart").getContext("2d"), config);
+                const chart = new CanvasJS.Chart("chart-container", config);
+                chart.render();
             };
         </script>
         <style>
@@ -220,6 +159,7 @@
             }
             .chart-container {
                 width: 90%;
+                height: 800px;
             }
             .button-container {
                 width: 90%;
@@ -237,11 +177,10 @@
                 margin: .5em;
             }
         </style>
-	</head>
-	<body>
+    </head>
+    <body>
         <div class="container">
             <div class="button-container">
-                <button onclick="updateChart()">Switch chart between absolute / relative numbers</button>
                 <div>
                     <span>Branch: </span>
                     <select id="branch-select"></select>
@@ -251,9 +190,7 @@
                     <a href="https://github.com/nielsdos/php-benchmark-visualisation" rel="noopener" target="_blank">Visualisation repo</a>
                 </div>
             </div>
-            <div class="chart-container">
-                <canvas id="chart"></canvas>
-            </div>
+            <div id="chart-container" class="chart-container"></div>
         </div>
-	</body>
+    </body>
 </html>
