@@ -65,6 +65,7 @@ function main(): void {
     $benchmarks = array_filter($benchmarks, fn ($name) => !str_contains($name, "Laravel"));
     $benchmarks = array_values($benchmarks);
     generateOutputFiles([
+        'PHP-8.5' => $result['PHP-8.5'],
         'PHP-8.4' => $result['PHP-8.4'],
         'PHP-8.3' => $result['PHP-8.3'],
         'master' => $result['master'],
