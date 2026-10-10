@@ -40,6 +40,10 @@ function main(): void {
         }
 
         $summary_data = json_decode(file_get_contents(BENCHMARK_DATA_PATH . $file));
+        if (!is_object($summary_data)) {
+            echo "Could not parse summary for commit $commit_id: ", json_last_error_msg(), "\n";
+            continue;
+        }
         // We only started recording the branch after the 8.3 split-off into 8.4.
         $branch = $summary_data->branch ?? "master";
         unset($summary_data->branch);
