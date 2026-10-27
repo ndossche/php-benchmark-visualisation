@@ -1,9 +1,0 @@
-{
-    "name": "nielsdos/php-benchmark-visualisation",
-    "type": "project",
-    "license": "MIT",
-    "description": "Scripts that generate a visualisation for PHP benchmark data.",
-    "require": {
-        "czproject/git-php": "^4.1"
-    }
-}

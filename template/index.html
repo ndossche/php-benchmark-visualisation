@@ -5,9 +5,45 @@
         <meta charset="utf-8">
         <script src="https://cdn.canvasjs.com/canvasjs.min.js"></script>
         <script>
+            const sources = {
+                realtime: "Real-time",
+                instructions: "Instruction count",
+            };
+
             function getSelectedBranch() {
                 const s = new URLSearchParams(location.search);
                 return s.get("branch") ?? "master";
+            }
+
+            function getSelectedSource() {
+                const s = new URLSearchParams(location.search);
+                // Old links only have a branch. Branches only exist for instruction counts.
+                const source = s.get("source") ?? (s.has("branch") ? "instructions" : "realtime");
+                return Object.hasOwn(sources, source) ? source : "realtime";
+            }
+
+            function isJitSelected() {
+                const s = new URLSearchParams(location.search);
+                return s.get("jit") === "1";
+            }
+
+            // Reloads the page with a changed URL parameter.
+            function setUrlParam(name, value) {
+                const s = new URLSearchParams(location.search);
+                s.set(name, value);
+                location.search = s.toString();
+            }
+
+            function setupSourceSelector(selectedSource) {
+                const sourceSelector = document.getElementById("source-select");
+                for (const [source, label] of Object.entries(sources)) {
+                    const option = document.createElement("option");
+                    option.value = source;
+                    option.innerText = label;
+                    option.selected = source === selectedSource;
+                    sourceSelector.appendChild(option);
+                }
+                sourceSelector.onchange = () => setUrlParam("source", sourceSelector.value);
             }
 
             function setupBranchSelector(selectedBranch, branches) {
@@ -19,27 +55,69 @@
                     option.selected = branch === selectedBranch;
                     branchSelector.appendChild(option);
                 }
-                branchSelector.onchange = () => {
-                    const s = new URLSearchParams(location.search);
-                    s.set("branch", branchSelector.value);
-                    location.search = s.toString();
+                branchSelector.onchange = () => setUrlParam("branch", branchSelector.value);
+            }
+
+            function setupJitToggle() {
+                const jitToggle = document.getElementById("jit-toggle");
+                jitToggle.checked = isJitSelected();
+                jitToggle.onchange = () => setUrlParam("jit", jitToggle.checked ? "1" : "0");
+            }
+
+            // Shows or hides all series of the benchmark that was clicked in the legend.
+            function toggleSeriesGroup(e) {
+                const visible = e.dataSeries.visible === false;
+                for (const series of e.chart.options.data) {
+                    if (series.group === e.dataSeries.group)
+                        series.visible = visible;
+                }
+            }
+
+            function createChartConfig(data, title, subtitle, axisYTitle, tooltipContent) {
+                return {
+                    data: data,
+                    legend: {
+                        verticalAlign: "top",
+                        itemclick: e => {
+                            toggleSeriesGroup(e);
+                            e.chart.render();
+                        },
+                        fontSize: 14,
+                    },
+                    title: { text: title, fontSize: 14 },
+                    subtitles: [{ text: subtitle, fontSize: 12 }],
+                    axisX: {
+                      titleFontSize: 14,
+                      labelFontSize: 14,
+                      gridThickness: 1,
+                      gridColor: '#dddddd',
+                      lineColor: '#dddddd',
+                    },
+                    axisY: {
+                        title: axisYTitle,
+                        suffix: "%",
+                        titleFontSize: 14,
+                        labelFontSize: 14,
+                        gridColor: '#dddddd',
+                        lineColor: '#dddddd',
+                    },
+                    zoomEnabled: true,
+                    toolTip: {
+                        content: tooltipContent,
+                    },
                 };
             }
 
-            function toggleDataSeries(e) {
-                if (typeof(e.dataSeries.visible) === "undefined" || e.dataSeries.visible) {
-                    e.dataSeries.visible = false;
-                } else {
-                    e.dataSeries.visible = true;
-                }
-                e.chart.render();
+            function escapeHtml(str) {
+                const div = document.createElement("div");
+                div.innerText = str;
+                return div.innerHTML;
             }
 
-            window.onload = async _ => {
+            async function renderInstructionChart() {
                 const rawData = await fetch('data.json').then(r => r.json());
 
-                const branches = Object.keys(rawData);
-                branches.pop(); // Remove "benchmarks" key
+                const branches = Object.keys(rawData.branches);
 
                 let selectedBranch = getSelectedBranch();
                 if (branches.indexOf(selectedBranch) === -1) {
@@ -47,14 +125,15 @@
                     selectedBranch = "master";
                 }
 
-                const branchData = rawData[selectedBranch];
+                const branchData = rawData.branches[selectedBranch];
 
                 setupBranchSelector(selectedBranch, branches);
 
                 const data = [];
 
-                for (const benchmark of rawData.benchmarks) {
+                for (const [group, benchmark] of rawData.benchmarks.entries()) {
                     data.push({
+                        group,
                         type: "line",
                         dataPoints: [],
                         name: benchmark,
@@ -91,6 +170,8 @@
                     let firstNonNull = 0;
                     while (firstNonNull < dataPoints.length && !dataPoints[firstNonNull].y)
                         firstNonNull++;
+                    if (firstNonNull === dataPoints.length)
+                        continue;
                     let first = dataPoints[firstNonNull].y;
                     for (let j = firstNonNull + 1; j < dataPoints.length; ++j) {
                         if (dataPoints[j].y)
@@ -99,49 +180,403 @@
                     dataPoints[firstNonNull].y = 0;
                 }
 
-                const config = {
-                    data: data,
-                    legend: {
-                        verticalAlign: "top",
-                        itemclick: toggleDataSeries,
-                        fontSize: 14,
-                    },
-                    title: { text: 'PHP performance measurements in number of instructions', fontSize: 14 },
-                    subtitles: [{ text: 'Smaller numbers are better', fontSize: 12 }],
-                    axisX: {
-                      titleFontSize: 14,
-                      labelFontSize: 14,
-                      gridThickness: 1,
-                      gridColor: '#dddddd',
-                      lineColor: '#dddddd',
-                    },
-                    axisY: {
-                        title: 'Relative change in percentage in instruction count',
-                        suffix: "%",
-                        titleFontSize: 14,
-                        labelFontSize: 14,
-                        gridColor: '#dddddd',
-                        lineColor: '#dddddd',
-                    },
-                    zoomEnabled: true,
-                    toolTip: {
-                        content: function(e) {
-                            let label = e.entries[0].dataSeries.name;
+                const config = createChartConfig(
+                    data,
+                    'PHP performance measurements in number of instructions',
+                    'Smaller numbers are better',
+                    'Relative change in percentage in instruction count',
+                    function(e) {
+                        let label = e.entries[0].dataSeries.name;
 
-                            const {commit_info} = branchData[e.entries[0].index];
-                            let value = e.entries[0].dataPoint.y.toLocaleString(undefined, { maximumFractionDigits: 3 }) + "%";
+                        // Use the commit of the point itself. The index is wrong when a line skips commits.
+                        const {commit_info} = e.entries[0].dataPoint;
+                        let value = e.entries[0].dataPoint.y.toLocaleString(undefined, { maximumFractionDigits: 3 }) + "%";
 
-                            return `
-                                ${label}: ${value}<br>
-                                Commit ID: ${commit_info.id.substr(0, 8)}<br>
-                                ${commit_info.subject}
-                            `;
-                        },
+                        return `
+                            ${label}: ${value}<br>
+                            Commit ID: ${commit_info.id.substr(0, 8)}<br>
+                            ${escapeHtml(commit_info.subject)}
+                        `;
                     },
-                };
+                );
 
                 const chart = new CanvasJS.Chart("chart-container", config);
                 chart.render();
+            }
+
+            const realtimeColors = ["#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4"];
+            // Number of runs used for the rolling median and the band.
+            const rollingWindow = 14;
+            // Do not show the band when there are fewer runs than this.
+            const minBandRuns = 5;
+            // Width of the band on each side of the median, in robust standard deviations.
+            const bandSigmas = 3;
+            // Break the lines when there was no run for more than this many days.
+            const maxGapDays = 7;
+            // A step compares the median of up to stepWindow runs before and after a night.
+            // At least minStepRuns runs are needed on each side.
+            const stepWindow = 7;
+            const minStepRuns = 4;
+            // A step must be this many standard errors large, and at least minStepPercent.
+            const stepSigmas = 4;
+            const minStepPercent = 0.5;
+            // The list of changes shows steps from this many days back.
+            const recentDays = 180;
+            const dayMs = 24 * 60 * 60 * 1000;
+
+            const changeStyles = {
+                environment: { color: '#555555', lineDashType: 'dash', thickness: 2 },
+                version: { color: '#c0392b', lineDashType: 'dash', thickness: 2 },
+                settings: { color: '#999999', lineDashType: 'dot', thickness: 1 },
+            };
+
+            function describeSettings({warmup, iterations, requests}) {
+                return `${warmup} warmup, ${iterations} iterations, ${requests} requests`;
+            }
+
+            // For each run, lists what changed since the previous run.
+            function findRealtimeChanges(runs, benchmarks) {
+                const lastResults = {};
+                return runs.map((run, i) => {
+                    const changes = [];
+                    const previous = runs[i - 1];
+                    if (previous) {
+                        if (run.machine !== previous.machine)
+                            changes.push({ kind: "environment", label: run.machine, text: `Machine: ${run.machine}` });
+                        // An empty value means it was not recorded yet. That is not a change.
+                        if (previous.gcc && run.gcc && run.gcc !== previous.gcc)
+                            changes.push({ kind: "environment", label: `GCC ${run.gcc}`, text: `GCC: ${previous.gcc} → ${run.gcc}` });
+                        if (previous.cpu && run.cpu && run.cpu !== previous.cpu && run.machine === previous.machine)
+                            changes.push({ kind: "environment", label: "CPU", text: `CPU: ${run.cpu}` });
+                    }
+                    for (const benchmark of benchmarks) {
+                        const result = run.results[benchmark];
+                        if (!result)
+                            continue;
+                        const last = lastResults[benchmark];
+                        if (last && result.name !== last.name)
+                            changes.push({ kind: "version", benchmark, label: result.name, text: `${last.name} → ${result.name}` });
+                        if (last && describeSettings(result.settings) !== describeSettings(last.settings))
+                            changes.push({ kind: "settings", benchmark, text: `${benchmark}: ${describeSettings(result.settings)}` });
+                        lastResults[benchmark] = result;
+                    }
+                    return changes;
+                });
+            }
+
+            function mean(values) {
+                return values.reduce((sum, v) => sum + v, 0) / values.length;
+            }
+
+            function median(values) {
+                const sorted = [...values].sort((a, b) => a - b);
+                const mid = sorted.length >> 1;
+                return sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
+            }
+
+            // A standard deviation that ignores outliers. It is based on the median absolute deviation.
+            function robustSigma(deviations) {
+                return 1.4826 * median(deviations.map(Math.abs));
+            }
+
+            // Returns the median, and a band around it.
+            function rollingStatistics(values) {
+                const med = median(values);
+                if (values.length < minBandRuns)
+                    return { median: med, low: null, high: null };
+                const sigma = robustSigma(values.map(v => v - med));
+                return { median: med, low: med - bandSigmas * sigma, high: med + bandSigmas * sigma };
+            }
+
+            // Finds nights where the results of one benchmark clearly went up or down.
+            // points: the nightly results of the benchmark, in order.
+            function findSteps(points) {
+                const candidates = [];
+                for (let i = minStepRuns; i <= points.length - minStepRuns; i++) {
+                    const before = points.slice(Math.max(0, i - stepWindow), i).map(p => p.value);
+                    const after = points.slice(i, i + stepWindow).map(p => p.value);
+                    const medianBefore = median(before);
+                    const medianAfter = median(after);
+                    const shift = medianAfter - medianBefore;
+                    // The standard error of the difference between the two medians.
+                    const sigma = robustSigma([...before.map(v => v - medianBefore), ...after.map(v => v - medianAfter)]);
+                    const standardError = 1.2533 * sigma * Math.sqrt(1 / before.length + 1 / after.length);
+                    // The medians are about the same for every night close to a step, but the means are not.
+                    // The difference of the means is largest at the night of the step itself.
+                    const meanShift = Math.abs(mean(after) - mean(before));
+                    if (Math.abs(shift) >= minStepPercent && Math.abs(shift) >= stepSigmas * standardError)
+                        candidates.push({ index: i, shift, meanShift, preliminary: after.length < stepWindow });
+                }
+
+                // Nearby nights see the same step. Keep only the night where it is clearest.
+                const steps = [];
+                candidates.sort((a, b) => b.meanShift - a.meanShift);
+                for (const candidate of candidates) {
+                    if (steps.every(step => Math.abs(step.index - candidate.index) >= stepWindow))
+                        steps.push(candidate);
+                }
+                return steps.map(step => ({ ...points[step.index], shift: step.shift, preliminary: step.preliminary }));
+            }
+
+            // Shows the recent steps of all benchmarks in a table.
+            // Steps of different benchmarks within two days of each other are shown as one change.
+            function renderRecentChanges(steps, lastDate) {
+                document.getElementById("recent-changes-title").innerText = `Changes in the last ${recentDays} days`;
+                const recent = steps
+                    .filter(step => lastDate - step.date <= recentDays * dayMs)
+                    .sort((a, b) => a.date - b.date);
+                const groups = [];
+                for (const step of recent) {
+                    const group = groups.at(-1);
+                    if (group && step.date - group.at(-1).date <= 2 * dayMs)
+                        group.push(step);
+                    else
+                        groups.push([step]);
+                }
+
+                const rows = groups.reverse().map(group => {
+                    const first = group[0];
+                    const last = group.at(-1);
+                    const formatDate = date => date.toISOString().substring(0, 10);
+                    const dates = first.date - last.date === 0 ? formatDate(first.date) : `${formatDate(first.date)} – ${formatDate(last.date)}`;
+                    const moves = group.map(step =>
+                        `${escapeHtml(step.benchmark)}: ${formatPercentage(Math.abs(step.shift))} ${step.shift > 0 ? 'slower' : 'faster'}` +
+                        (step.preliminary ? ' (not final yet)' : '')
+                    ).join('<br>');
+                    const notes = [...new Set(group.flatMap(step => step.changes.map(c => c.text)))]
+                        .map(text => `<br><i>Also changed: ${escapeHtml(text)}</i>`)
+                        .join('');
+                    // The night of a step can be one night off, so also include the night before.
+                    const from = (first.runBefore ?? first.run).commit_info.previous_id ?? first.run.commit_info.id;
+                    const url = `https://github.com/php/php-src/compare/${from}..${last.run.commit_info.id}`;
+                    return `<tr><td>${dates}</td><td>${moves}${notes}</td><td><a href="${url}" rel="noopener" target="_blank">Commits</a></td></tr>`;
+                });
+
+                document.getElementById("recent-changes-body").innerHTML = rows.length
+                    ? rows.join('')
+                    : '<tr><td colspan="3">No clear changes.</td></tr>';
+            }
+
+            function withAlpha(color, alpha) {
+                return color + Math.round(alpha * 255).toString(16).padStart(2, '0');
+            }
+
+            function percentile(sortedValues, fraction) {
+                return sortedValues[Math.min(sortedValues.length - 1, Math.floor(fraction * sortedValues.length))];
+            }
+
+            // Fits the Y axis to the lines and bands of the visible benchmarks.
+            // A few extreme values do not decide the range.
+            // Nights outside the range are drawn as triangles at the edge.
+            function scaleRealtimeAxis(chart) {
+                const visibleSeries = chart.options.data.filter(s => s.visible !== false);
+                const valuesOf = type => visibleSeries
+                    .filter(s => s.type === type)
+                    .flatMap(s => s.dataPoints.flatMap(p => p.y ?? []))
+                    .sort((a, b) => a - b);
+                // Always show the full median lines. Single bad nights do not change them much.
+                const medianValues = valuesOf("line");
+                const bandValues = valuesOf("rangeArea");
+                if (!medianValues.length)
+                    return;
+                const low = Math.min(medianValues[0], percentile(bandValues, 0.01) ?? Infinity);
+                const high = Math.max(medianValues.at(-1), percentile(bandValues, 0.99) ?? -Infinity);
+                const padding = Math.max((high - low) * 0.05, 0.5);
+                const axisMin = low - padding;
+                const axisMax = high + padding;
+                chart.options.axisY.minimum = axisMin;
+                chart.options.axisY.maximum = axisMax;
+
+                for (const s of chart.options.data.filter(s => s.type === "scatter")) {
+                    for (const point of s.dataPoints) {
+                        const {value, outside} = point.info;
+                        const offScale = value < axisMin || value > axisMax;
+                        point.y = Math.min(Math.max(value, axisMin), axisMax);
+                        point.markerType = offScale ? "triangle" : "circle";
+                        point.markerSize = offScale ? 8 : (outside ? 7 : 4);
+                    }
+                }
+            }
+
+            function formatPercentage(value) {
+                return value.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + "%";
+            }
+
+            async function renderRealtimeChart() {
+                const rawData = await fetch('realtime.json').then(r => r.json());
+                const jit = isJitSelected();
+                const variant = jit ? "jit_diff" : "diff";
+
+                setupJitToggle();
+                document.getElementById("key-line").innerText = `Line: rolling median over the last ${rollingWindow} runs.`;
+                document.getElementById("key-band").innerText =
+                    `Band: expected range (median ± ${bandSigmas} robust standard deviations); ` +
+                    'highlighted dots fall outside it, triangles are off-scale.';
+
+                const openChangeset = function (e) {
+                    if (!e.dataPoint.info)
+                        return;
+                    const {id, previous_id} = e.dataPoint.info.run.commit_info;
+                    const url = previous_id
+                        ? `https://github.com/php/php-src/compare/${previous_id}..${id}`
+                        : `https://github.com/php/php-src/commit/${id}`;
+                    window.open(url, "_blank");
+                };
+
+                // Each benchmark has three parts: a band, a median line, and a dot for each night.
+                const series = rawData.benchmarks.map((benchmark, group) => {
+                    const color = realtimeColors[group % realtimeColors.length];
+                    const common = { group, color, click: openChangeset };
+                    return {
+                        band: { ...common, dataPoints: [], type: "rangeArea", fillOpacity: 0.18, lineThickness: 0, markerSize: 0 },
+                        median: { ...common, dataPoints: [], type: "line", name: benchmark, showInLegend: true, lineThickness: 2, markerSize: 0 },
+                        nightly: { ...common, dataPoints: [], type: "scatter", markerSize: 4 },
+                    };
+                });
+
+                const changes = findRealtimeChanges(rawData.runs, rawData.benchmarks);
+                const windows = rawData.benchmarks.map(() => []);
+                const pendingRestarts = rawData.benchmarks.map(() => false);
+                const lastDates = rawData.benchmarks.map(() => null);
+                const points = rawData.benchmarks.map(() => []);
+                const stripLines = [];
+
+                rawData.runs.forEach((run, i) => {
+                    // The times are in UTC.
+                    const date = new Date(run.date.replace(' ', 'T') + 'Z');
+                    const runChanges = changes[i];
+
+                    if (runChanges.length) {
+                        // The marker style shows the most important change.
+                        // Settings changes often come close together, so they get no label. The labels would overlap.
+                        const kind = ["environment", "version", "settings"].find(k => runChanges.some(c => c.kind === k));
+                        const labels = [...new Set(runChanges.filter(c => c.label).map(c => c.label))];
+                        stripLines.push({
+                            ...changeStyles[kind],
+                            value: date,
+                            label: labels.join(", "),
+                            labelFontColor: changeStyles[kind].color,
+                            labelBackgroundColor: 'transparent',
+                            labelFontSize: 11,
+                        });
+                    }
+
+                    rawData.benchmarks.forEach((name, id) => {
+                        // After a change that affects this benchmark, start the rolling window again.
+                        // This way, the band only shows the normal noise.
+                        // If this run has no result (e.g. no JIT result), start again at the next run with a result.
+                        const restart = pendingRestarts[id] || runChanges.some(c => c.kind === "environment" || c.benchmark === name);
+                        const result = run.results[name];
+                        if (!result || result[variant] === undefined) {
+                            pendingRestarts[id] = restart;
+                            return;
+                        }
+                        pendingRestarts[id] = false;
+
+                        if (restart)
+                            windows[id] = [];
+                        // A null point breaks the line and band. Do this after a restart and after a long gap.
+                        const gap = lastDates[id] !== null && date - lastDates[id] > maxGapDays * dayMs;
+                        if ((restart && lastDates[id] !== null) || gap) {
+                            series[id].band.dataPoints.push({ x: date, y: null });
+                            series[id].median.dataPoints.push({ x: date, y: null });
+                        }
+                        lastDates[id] = date;
+
+                        const value = result[variant];
+                        windows[id].push(value);
+                        if (windows[id].length > rollingWindow)
+                            windows[id].shift();
+                        const stats = rollingStatistics(windows[id]);
+                        const outside = stats.low !== null && (value < stats.low || value > stats.high);
+                        const info = { run, result, value, stats, outside, changes: runChanges };
+                        const {color} = series[id].median;
+                        points[id].push({ benchmark: name, date, run, runBefore: rawData.runs[i - 1], value, changes: runChanges });
+
+                        series[id].band.dataPoints.push({ x: date, y: stats.low === null ? null : [stats.low, stats.high], info });
+                        series[id].median.dataPoints.push({ x: date, y: stats.median, info });
+                        series[id].nightly.dataPoints.push({
+                            x: date,
+                            y: value,
+                            info,
+                            markerColor: outside ? color : withAlpha(color, 0.3),
+                            markerBorderColor: outside ? '#ffffff' : undefined,
+                            markerBorderThickness: outside ? 1 : 0,
+                        });
+                    });
+                });
+
+                const data = [
+                    ...series.map(s => s.band),
+                    ...series.map(s => s.nightly),
+                    ...series.map(s => s.median),
+                ];
+
+                const baselineId = rawData.runs.at(-1)?.commit_info.baseline_id ?? "baseline";
+
+                const config = createChartConfig(
+                    data,
+                    `PHP master real-time performance${jit ? ' (JIT)' : ''} relative to baseline commit ${baselineId}`,
+                    'Smaller numbers are better. Click a point to view the commits since the previous run.',
+                    'Relative change in percentage in mean wall time vs. baseline',
+                    function(e) {
+                        const {info} = e.entries[0].dataPoint;
+                        if (!info)
+                            return null;
+                        const {run, result, value, stats, outside} = info;
+                        const {commit_info} = run;
+                        const range = stats.low === null
+                            ? 'not enough runs since the last change'
+                            : `${formatPercentage(stats.low)} … ${formatPercentage(stats.high)}`;
+                        const changeList = info.changes.length
+                            ? `<br><b>Changed since previous run:</b><br>${info.changes.map(c => escapeHtml(c.text)).join('<br>')}`
+                            : '';
+
+                        return `
+                            <b>${escapeHtml(result.name)}</b>: ${formatPercentage(value)}${outside ? ' <b>(outside expected range)</b>' : ''}<br>
+                            Rolling median: ${formatPercentage(stats.median)}<br>
+                            Expected range: ${range}<br>
+                            Machine: ${escapeHtml(run.machine)}<br>
+                            Commit ID: ${commit_info.id.substr(0, 8)}<br>
+                            ${escapeHtml(commit_info.subject ?? '')}
+                            ${changeList}
+                        `;
+                    },
+                );
+                config.axisX.stripLines = stripLines;
+                config.legend.itemclick = e => {
+                    toggleSeriesGroup(e);
+                    scaleRealtimeAxis(e.chart);
+                    e.chart.render();
+                };
+
+                const chart = new CanvasJS.Chart("chart-container", config);
+                scaleRealtimeAxis(chart);
+                chart.render();
+
+                if (rawData.runs.length) {
+                    const lastDate = new Date(rawData.runs.at(-1).date.replace(' ', 'T') + 'Z');
+                    renderRecentChanges(points.flatMap(findSteps), lastDate);
+                }
+            }
+
+            window.onload = async _ => {
+                const source = getSelectedSource();
+                setupSourceSelector(source);
+
+                document.getElementById("branch-selector").hidden = source !== "instructions";
+                document.getElementById("jit-selector").hidden = source !== "realtime";
+                document.getElementById("realtime-key").hidden = source !== "realtime";
+                document.getElementById("recent-changes").hidden = source !== "realtime";
+                document.getElementById("data-link").href = source === "realtime"
+                    ? "https://github.com/php/real-time-benchmark-data"
+                    : "https://github.com/php/benchmarking-data";
+
+                if (source === "realtime") {
+                    await renderRealtimeChart();
+                } else {
+                    await renderInstructionChart();
+                }
             };
         </script>
         <style>
@@ -170,6 +605,54 @@
             .button-container > * {
                 margin: .5em;
             }
+            #branch-selector, #jit-selector {
+                margin-left: 1em;
+            }
+            [hidden] {
+                display: none !important;
+            }
+            .key {
+                width: 90%;
+                margin: .5em 0 1em;
+                display: flex;
+                flex-wrap: wrap;
+                gap: .5em 1.5em;
+                font-size: 0.85rem;
+                color: #444444;
+            }
+            .key .swatch {
+                display: inline-block;
+                width: 18px;
+                margin-right: .4em;
+                vertical-align: middle;
+                border-top: 2px dashed;
+            }
+            .key .swatch.dotted {
+                border-top: 1px dotted;
+            }
+            .recent-changes {
+                width: 90%;
+                margin-bottom: 2em;
+                font-size: 0.9rem;
+            }
+            .recent-changes h2 {
+                font-size: 1.1rem;
+                margin-bottom: .25em;
+            }
+            .recent-changes p {
+                margin-top: 0;
+                color: #444444;
+            }
+            .recent-changes table {
+                border-collapse: collapse;
+                width: 100%;
+            }
+            .recent-changes th, .recent-changes td {
+                text-align: left;
+                vertical-align: top;
+                padding: .4em .8em .4em 0;
+                border-bottom: 1px solid #dddddd;
+            }
             .button-container > .links {
                 font-size: 0.9rem;
             }
@@ -182,15 +665,40 @@
         <div class="container">
             <div class="button-container">
                 <div>
-                    <span>Branch: </span>
-                    <select id="branch-select"></select>
+                    <span>Data: </span>
+                    <select id="source-select"></select>
+                    <span id="branch-selector">
+                        <span>Branch: </span>
+                        <select id="branch-select"></select>
+                    </span>
+                    <label id="jit-selector">
+                        <input type="checkbox" id="jit-toggle">
+                        JIT
+                    </label>
                 </div>
                 <div class="links">
-                    <a href="https://github.com/php/benchmarking-data" rel="noopener" target="_blank">Benchmark data repo</a>
+                    <a id="data-link" href="https://github.com/php/benchmarking-data" rel="noopener" target="_blank">Benchmark data repo</a>
                     <a href="https://github.com/ndossche/php-benchmark-visualisation" rel="noopener" target="_blank">Visualisation repo</a>
                 </div>
             </div>
             <div id="chart-container" class="chart-container"></div>
+            <div id="realtime-key" class="key" hidden>
+                <span id="key-line"></span>
+                <span id="key-band"></span>
+                <span><span class="swatch" style="border-color: #555555"></span>Machine / GCC change</span>
+                <span><span class="swatch" style="border-color: #c0392b"></span>App version change</span>
+                <span><span class="swatch dotted" style="border-color: #999999"></span>Benchmark settings change</span>
+            </div>
+            <div id="recent-changes" class="recent-changes" hidden>
+                <h2 id="recent-changes-title"></h2>
+                <p>Nights where a benchmark clearly became faster or slower. The exact night can be one off, so the commits also include the night before. "Not final yet" means there are not enough newer runs yet.</p>
+                <table>
+                    <thead>
+                        <tr><th>Night</th><th>Change</th><th></th></tr>
+                    </thead>
+                    <tbody id="recent-changes-body"></tbody>
+                </table>
+            </div>
         </div>
     </body>
 </html>

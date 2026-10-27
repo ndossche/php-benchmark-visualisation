@@ -1,5 +1,5 @@
-vendor
 output
 benchmarking-data
 php-src
 template/data.json
+real-time-benchmark-data
